@@ -3,6 +3,7 @@ members = [
   "boards/adafruit_nrf52pro",
   "nrf52-hal",
   "nrf52840-hal",
+  "boards/nordic_nrf52840dk",
 ]
 
 [profile.dev]
