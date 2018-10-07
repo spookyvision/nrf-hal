@@ -15,14 +15,17 @@ use gpio::{
     PushPull,
 };
 
+// Re-export SVD variants to allow user to directly set values
+pub use target::uarte0::config::PARITYW as Parity;
+pub use target::uarte0::baudrate::BAUDRATEW as Baudrate;
 
 pub trait UarteExt : Deref<Target=uarte0::RegisterBlock> + Sized {
-    fn constrain(self, pins: Pins) -> Uarte<Self>;
+    fn constrain(self, pins: Pins, parity: Parity, baudrate: Baudrate) -> Uarte<Self>;
 }
 
 impl UarteExt for UARTE0 {
-    fn constrain(self, pins: Pins) -> Uarte<Self> {
-        Uarte::new(self, pins)
+    fn constrain(self, pins: Pins, parity: Parity, baudrate: Baudrate) -> Uarte<Self> {
+        Uarte::new(self, pins, parity, baudrate)
     }
 }
 
@@ -33,12 +36,10 @@ impl UarteExt for UARTE0 {
 /// - The UARTE instances share the same address space with instances of UART.
 ///   You need to make sure that conflicting instances
 ///   are disabled before using `Uarte`. See product specification, section 15.2.
-/// - The UART is set at 1Mbit/s baudrate
-/// - The Parity is disabled
 pub struct Uarte<T>(T);
 
 impl<T> Uarte<T> where T: UarteExt {
-    pub fn new(uarte: T, mut pins: Pins) -> Self {
+    pub fn new(uarte: T, mut pins: Pins, parity: Parity, baudrate: Baudrate) -> Self {
         // Select pins
         pins.rxd.set_high();
         uarte.psel.rxd.write(|w| {
@@ -81,12 +82,12 @@ impl<T> Uarte<T> where T: UarteExt {
                 .hwfc().bit(
                     pins.rts.is_some() && pins.cts.is_some()
                 )
-                .parity().excluded()
+                .parity().variant(parity)
         );
 
         // Configure frequency
         uarte.baudrate.write(|w|
-            w.baudrate().baud1m()
+            w.baudrate().variant(baudrate)
         );
 
         Uarte(uarte)
