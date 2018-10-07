@@ -1,4 +1,4 @@
-//! HAL interface to the UARTE peripheral
+=//! HAL interface to the UARTE peripheral
 //!
 //! See product specification, chapter 33.
 use core::ops::Deref;
@@ -126,21 +126,12 @@ impl<T> Uarte<T> where T: UarteExt {
             //
             // The MAXCNT field is 8 bits wide and accepts the full range of
             // values.
-            unsafe { w.maxcnt().bits(tx_buffer.len() as _) }
-        );
-
-        // Tell the RXD channel it doesn't need to read anything
-        self.0.rxd.maxcnt.write(|w|
-            // This is safe for the same reasons that writing to TXD.MAXCNT is
-            // safe. Please refer to the explanation there.
-            unsafe { w.maxcnt().bits(0) }
-        );
+            unsafe { w.maxcnt().bits(tx_buffer.len() as _) });
 
         // Start UART Receive transaction
         self.0.tasks_starttx.write(|w|
             // `1` is a valid value to write to task registers.
-            unsafe { w.bits(1) }
-        );
+            unsafe { w.bits(1) });
 
         // Wait for transmission to end
         while self.0.events_endtx.read().bits() == 0 {}
