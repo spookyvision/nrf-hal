@@ -6,7 +6,7 @@
 //! - nrf52840: Section 6.34
 
 use core::ops::Deref;
-
+use core::sync::atomic::{AtomicUsize, Ordering};
 use target::{
     uarte0,
     UARTE0,
@@ -18,6 +18,18 @@ use gpio::{
     Output,
     PushPull,
 };
+
+// Grr.
+//   --> nrf52-hal-common/src/uarte.rs:11:67
+//    |
+// 11 | static INTERRUPT_HANDLER: VolatileCell<&fn()> = VolatileCell::new(&no_interrupt_handler);
+//    |                                                                   ^^^^^^^^^^^^^^^^^^^^^ expected fn pointer, found fn item
+//    |
+//    = note: expected type `&'static fn()`
+//               found type `&fn() {uarte::no_interrupt_handler}`
+
+// TODO - validate that the system hardfaults on calling this
+static INTERRUPT_HANDLER: AtomicUsize = AtomicUsize::new(0xFFFF_FFFF);
 
 // Re-export SVD variants to allow user to directly set values
 pub use target::uarte0::{
@@ -173,4 +185,23 @@ pub enum Error {
     RxBufferTooLong,
     Transmit,
     Receive,
+}
+
+/// Set the handler function for the UARTE0_UART0 interrupt. This is not
+/// necessary from user code (handlers are set by the appropriate driver)
+pub(crate) unsafe fn set_interrupt_handler(hdlr: usize) {
+    INTERRUPT_HANDLER.store(hdlr, Ordering::SeqCst);
+}
+
+
+/// A "null" interrupt handler. Immediately panic if called
+#[no_mangle]
+pub fn no_interrupt_handler() {
+    panic!("No Interrupt Handler!");
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn UARTE0_UART0() {
+    // add code here
+    (*(INTERRUPT_HANDLER.load(Ordering::SeqCst) as *const fn()))();
 }

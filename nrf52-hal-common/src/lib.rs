@@ -5,6 +5,8 @@ extern crate cortex_m;
 extern crate embedded_hal as hal;
 extern crate nb;
 extern crate void;
+extern crate heapless;
+extern crate vcell;
 
 #[cfg(feature = "52832")]
 pub extern crate nrf52 as target;
@@ -19,6 +21,9 @@ pub mod clocks;
 pub mod time;
 pub mod timer;
 pub mod uarte;
+
+// TODO: Needs a better home
+pub mod uarte_stream;
 
 pub mod prelude {
     pub use hal::prelude::*;
@@ -37,3 +42,6 @@ pub use delay::Delay;
 pub use spim::Spim;
 pub use timer::Timer;
 pub use uarte::Uarte;
+
+// Interrupts
+pub use uarte::UARTE0_UART0;
