@@ -85,12 +85,10 @@ impl<T> Uarte<T> where T: UarteExt {
         );
 
         // Configure
+        let hardware_flow_control = pins.rts.is_some() && pins.cts.is_some();
         uarte.config.write(|w|
-            w
-                .hwfc().bit(
-                    pins.rts.is_some() && pins.cts.is_some()
-                )
-                .parity().variant(parity)
+            w.hwfc().bit(hardware_flow_control)
+             .parity().variant(parity)
         );
 
         // Configure frequency
