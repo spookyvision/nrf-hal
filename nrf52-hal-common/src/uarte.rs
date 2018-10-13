@@ -136,7 +136,7 @@ impl<T> Uarte<T> where T: UarteExt {
             // values.
             unsafe { w.maxcnt().bits(tx_buffer.len() as _) });
 
-        // Start UART Receive transaction
+        // Start UARTE Transmit transaction
         self.0.tasks_starttx.write(|w|
             // `1` is a valid value to write to task registers.
             unsafe { w.bits(1) });
