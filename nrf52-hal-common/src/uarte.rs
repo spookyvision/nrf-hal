@@ -1,6 +1,10 @@
-=//! HAL interface to the UARTE peripheral
+//! HAL interface to the UARTE peripheral
 //!
-//! See product specification, chapter 33.
+//! See product specification:
+//!
+//! - nrf52832: Section 35
+//! - nrf52840: Section 6.34
+
 use core::ops::Deref;
 
 use target::{
@@ -16,10 +20,12 @@ use gpio::{
 };
 
 // Re-export SVD variants to allow user to directly set values
-pub use target::uarte0::config::PARITYW as Parity;
-pub use target::uarte0::baudrate::BAUDRATEW as Baudrate;
+pub use target::uarte0::{
+    baudrate::BAUDRATEW as Baudrate,
+    config::PARITYW as Parity,
+};
 
-pub trait UarteExt : Deref<Target=uarte0::RegisterBlock> + Sized {
+pub trait UarteExt: Deref<Target = uarte0::RegisterBlock> + Sized {
     fn constrain(self, pins: Pins, parity: Parity, baudrate: Baudrate) -> Uarte<Self>;
 }
 
@@ -35,7 +41,9 @@ impl UarteExt for UARTE0 {
 /// This is a very basic interface that comes with the following limitations:
 /// - The UARTE instances share the same address space with instances of UART.
 ///   You need to make sure that conflicting instances
-///   are disabled before using `Uarte`. See product specification, section 15.2.
+///   are disabled before using `Uarte`. See product specification:
+///     - nrf52832: Section 15.2
+///     - nrf52840: Section 6.1.2
 pub struct Uarte<T>(T);
 
 impl<T> Uarte<T> where T: UarteExt {
@@ -93,7 +101,7 @@ impl<T> Uarte<T> where T: UarteExt {
         Uarte(uarte)
     }
 
-    /// Write via UART
+    /// Write via UARTE
     ///
     /// This method uses transmits all bytes in `tx_buffer`
     ///
