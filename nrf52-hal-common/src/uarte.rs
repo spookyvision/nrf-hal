@@ -120,7 +120,7 @@ impl<T> Uarte<T> where T: UarteExt {
         // Set up the DMA write
         self.0.txd.ptr.write(|w|
             // We're giving the register a pointer to the stack. Since we're
-            // waiting for the UART transaction to end before this stack pointer
+            // waiting for the UARTE transaction to end before this stack pointer
             // becomes invalid, there's nothing wrong here.
             //
             // The PTR field is a full 32 bits wide and accepts the full range
@@ -154,7 +154,7 @@ impl<T> Uarte<T> where T: UarteExt {
         Ok(())
     }
 
-    /// Return the raw interface to the underlying UART peripheral
+    /// Return the raw interface to the underlying UARTE peripheral
     pub fn free(self) -> T {
         self.0
     }
