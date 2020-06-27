@@ -13,14 +13,29 @@ use crate::target::PPI;
 use cfg_if::cfg_if;
 
 cfg_if! {
-    if #[cfg(feature = "52832")] {
+    if #[cfg(feature = "51")] {
+        mod event_nrf51;
+        mod task_nrf51;
+    } else if #[cfg(feature = "52810")] {
+        mod event_nrf52810;
+        mod task_nrf52810;
+    } else if #[cfg(feature = "52832")] {
         mod event_nrf52832;
         mod task_nrf52832;
+    } else if #[cfg(feature = "52833")] {
+        mod event_nrf52833;
+        mod task_nrf52833;
+    } else if #[cfg(feature = "52840")] {
+        mod event_nrf52840;
+        mod task_nrf52840;
+    } else if #[cfg(feature = "9160")] {
+        mod event_nrf9160;
+        mod task_nrf9160;
     }
 }
 
 mod sealed {
-    use super::{TaskAddr, EventAddr};
+    use super::{EventAddr, TaskAddr};
 
     pub trait Channel {
         const CH: usize;
@@ -39,7 +54,7 @@ mod sealed {
 
     pub trait NotFixed {}
 }
-use sealed::{Channel, NotFixed, Task, Event};
+use sealed::{Channel, Event, NotFixed, Task};
 
 pub struct TaskAddr(pub(crate) u32);
 pub struct EventAddr(pub(crate) u32);
@@ -85,7 +100,9 @@ impl<P: Channel> Ppi for P {
     #[cfg(not(feature = "51"))]
     fn set_fork_task_endpoint<T: Task>(&mut self, task: &T) {
         let regs = unsafe { &*PPI::ptr() };
-        regs.fork[P::CH].tep.write(|w| unsafe { w.bits(task.task_addr().0) });
+        regs.fork[P::CH]
+            .tep
+            .write(|w| unsafe { w.bits(task.task_addr().0) });
     }
 }
 
@@ -94,12 +111,16 @@ impl<P: Channel> Ppi for P {
 impl<P: Channel + NotFixed> ConfigurablePpi for P {
     fn set_task_endpoint<T: Task>(&mut self, task: &T) {
         let regs = unsafe { &*PPI::ptr() };
-        regs.ch[P::CH].tep.write(|w| unsafe { w.bits(task.task_addr().0) });
+        regs.ch[P::CH]
+            .tep
+            .write(|w| unsafe { w.bits(task.task_addr().0) });
     }
 
     fn set_event_endpoint<E: Event>(&mut self, event: &E) {
         let regs = unsafe { &*PPI::ptr() };
-        regs.ch[P::CH].eep.write(|w| unsafe { w.bits(event.event_addr().0) });
+        regs.ch[P::CH]
+            .eep
+            .write(|w| unsafe { w.bits(event.event_addr().0) });
     }
 }
 
