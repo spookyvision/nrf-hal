@@ -42,11 +42,13 @@ mod sealed {
     }
 
     pub trait Task {
+        #[inline(always)]
         fn task_addr(&self) -> TaskAddr {
             TaskAddr(self as *const _ as *const u32 as u32)
         }
     }
     pub trait Event {
+        #[inline(always)]
         fn event_addr(&self) -> EventAddr {
             EventAddr(self as *const _ as *const u32 as u32)
         }
@@ -69,17 +71,17 @@ pub trait Ppi {
 
     #[cfg(not(feature = "51"))]
     /// Sets the fork task that must be triggered when the configured event occurs. The user must
-    /// provide the address of the task.
+    /// provide a reference to the task.
     fn set_fork_task_endpoint<T: Task>(&mut self, task: &T);
 }
 
 /// Traits that extends the [Ppi](trait.Ppi.html) trait, marking a channel as fully configurable.
 pub trait ConfigurablePpi {
     /// Sets the task that must be triggered when the configured event occurs. The user must provide
-    /// the address of the task.
+    /// a reference to the task.
     fn set_task_endpoint<T: Task>(&mut self, task: &T);
 
-    /// Sets the event that will trigger the chosen task(s). The user must provide the address of
+    /// Sets the event that will trigger the chosen task(s). The user must provide a reference to
     /// the event.
     fn set_event_endpoint<E: Event>(&mut self, event: &E);
 }
@@ -98,6 +100,7 @@ impl<P: Channel> Ppi for P {
     }
 
     #[cfg(not(feature = "51"))]
+    #[inline(always)]
     fn set_fork_task_endpoint<T: Task>(&mut self, task: &T) {
         let regs = unsafe { &*PPI::ptr() };
         regs.fork[P::CH]
@@ -109,6 +112,7 @@ impl<P: Channel> Ppi for P {
 // All unsafe `ptr` calls only uses registers atomically, and only changes the resources owned by
 // the type (guaranteed by the abstraction)
 impl<P: Channel + NotFixed> ConfigurablePpi for P {
+    #[inline(always)]
     fn set_task_endpoint<T: Task>(&mut self, task: &T) {
         let regs = unsafe { &*PPI::ptr() };
         regs.ch[P::CH]
@@ -116,6 +120,7 @@ impl<P: Channel + NotFixed> ConfigurablePpi for P {
             .write(|w| unsafe { w.bits(task.task_addr().0) });
     }
 
+    #[inline(always)]
     fn set_event_endpoint<E: Event>(&mut self, event: &E) {
         let regs = unsafe { &*PPI::ptr() };
         regs.ch[P::CH]
