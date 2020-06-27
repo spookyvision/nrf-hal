@@ -43,12 +43,12 @@ mod sealed {
 
     pub trait Task {
         fn task_addr(&self) -> TaskAddr {
-            TaskAddr(&self as *const _ as u32)
+            TaskAddr(self as *const _ as *const u32 as u32)
         }
     }
     pub trait Event {
         fn event_addr(&self) -> EventAddr {
-            EventAddr(&self as *const _ as u32)
+            EventAddr(self as *const _ as *const u32 as u32)
         }
     }
 
