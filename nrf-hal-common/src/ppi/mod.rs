@@ -86,11 +86,13 @@ pub trait ConfigurablePpi {
 // All unsafe `ptr` calls only uses registers atomically, and only changes the resources owned by
 // the type (guaranteed by the abstraction)
 impl<P: Channel> Ppi for P {
+    #[inline(always)]
     fn enable(&mut self) {
         let regs = unsafe { &*PPI::ptr() };
         regs.chenset.write(|w| unsafe { w.bits(1 << P::CH) });
     }
 
+    #[inline(always)]
     fn disable(&mut self) {
         let regs = unsafe { &*PPI::ptr() };
         regs.chenclr.write(|w| unsafe { w.bits(1 << P::CH) });
