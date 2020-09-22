@@ -49,10 +49,7 @@ where
 {
     /// Takes ownership of the raw SPIS peripheral and relevant pins,
     /// returning a safe wrapper.
-    pub fn new(
-        spis: T,
-        pins: Pins,
-    ) -> Self {
+    pub fn new(spis: T, pins: Pins) -> Self {
         spis.psel.sck.write(|w| {
             unsafe { w.pin().bits(pins.sck.pin()) };
             #[cfg(any(feature = "52833", feature = "52840"))]
@@ -90,10 +87,7 @@ where
             .modify(|_r, w| w.cpha().bit(Phase::Trailing.into()));
         spis.enable.write(|w| w.enable().enabled());
 
-        Self {
-            spis,
-            pins,
-        }
+        Self { spis, pins }
     }
 
     /// Sets the ´default´ character (character clocked out in case of an ignored transaction).
