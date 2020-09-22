@@ -11,6 +11,7 @@
 - TWIS module ([#196]).
 - PWM module ([#200]).
 - I2S module ([#201]).
+- SPIS module ([#226]).
 
 ### Fixes
 
@@ -40,6 +41,7 @@
 [#214]: https://github.com/nrf-rs/nrf-hal/pull/214
 [#220]: https://github.com/nrf-rs/nrf-hal/pull/220
 [#221]: https://github.com/nrf-rs/nrf-hal/pull/221
+[#221]: https://github.com/nrf-rs/nrf-hal/pull/226
 
 ## [0.11.1]
 

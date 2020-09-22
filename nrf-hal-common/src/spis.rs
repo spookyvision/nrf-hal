@@ -1,3 +1,5 @@
+//! HAL interface to the SPIS peripheral.
+
 use core::{
     ops::Deref,
     sync::atomic::{compiler_fence, Ordering},
@@ -27,34 +29,44 @@ use crate::{
 };
 use embedded_dma::*;
 
-pub struct Spis<T: Instance>(T);
+/// A structure containing Pins needed for the SPIS HAL peripheral
+pub struct Pins {
+    csn: Pin<Input<Floating>>,
+    sck: Pin<Input<Floating>>,
+    copi: Option<Pin<Input<Floating>>>,
+    cipo: Option<Pin<Input<Floating>>>,
+}
+
+/// A HAL interface for the SPIS peripheral
+pub struct Spis<T: Instance> {
+    spis: T,
+    pins: Pins,
+}
 
 impl<T> Spis<T>
 where
     T: Instance,
 {
-    /// Takes ownership of the raw SPIS peripheral, returning a safe wrapper.
+    /// Takes ownership of the raw SPIS peripheral and relevant pins,
+    /// returning a safe wrapper.
     pub fn new(
         spis: T,
-        sck_pin: &Pin<Input<Floating>>,
-        cs_pin: &Pin<Input<Floating>>,
-        copi_pin: Option<&Pin<Input<Floating>>>,
-        cipo_pin: Option<&Pin<Input<Floating>>>,
+        pins: Pins,
     ) -> Self {
         spis.psel.sck.write(|w| {
-            unsafe { w.pin().bits(sck_pin.pin()) };
+            unsafe { w.pin().bits(pins.sck.pin()) };
             #[cfg(any(feature = "52833", feature = "52840"))]
-            w.port().bit(sck_pin.port().bit());
+            w.port().bit(pins.sck.port().bit());
             w.connect().connected()
         });
         spis.psel.csn.write(|w| {
-            unsafe { w.pin().bits(cs_pin.pin()) };
+            unsafe { w.pin().bits(pin.csn.pin()) };
             #[cfg(any(feature = "52833", feature = "52840"))]
-            w.port().bit(cs_pin.port().bit());
+            w.port().bit(pin.csn.port().bit());
             w.connect().connected()
         });
 
-        if let Some(p) = copi_pin {
+        if let Some(p) = pin.copi {
             spis.psel.mosi.write(|w| {
                 unsafe { w.pin().bits(p.pin()) };
                 #[cfg(any(feature = "52833", feature = "52840"))]
@@ -63,7 +75,7 @@ where
             });
         }
 
-        if let Some(p) = cipo_pin {
+        if let Some(p) = pin.cipo {
             spis.psel.miso.write(|w| {
                 unsafe { w.pin().bits(p.pin()) };
                 #[cfg(any(feature = "52833", feature = "52840"))]
@@ -77,7 +89,11 @@ where
         spis.config
             .modify(|_r, w| w.cpha().bit(Phase::Trailing.into()));
         spis.enable.write(|w| w.enable().enabled());
-        Self(spis)
+
+        Self {
+            spis,
+            pins,
+        }
     }
 
     /// Sets the ´default´ character (character clocked out in case of an ignored transaction).
@@ -160,6 +176,22 @@ where
         self.0.tasks_acquire.write(|w| unsafe { w.bits(1) });
         while self.0.events_acquired.read().bits() == 0 {}
         self
+    }
+
+    /// Requests acquiring the SPIS semaphore, returning an error if not
+    /// possible.
+    ///
+    /// Note: The semaphore will still be requested, and will be made
+    /// available at a later point.
+    #[inline(always)]
+    pub fn try_acquire(&self) -> Result<&Self, Error> {
+        compiler_fence(Ordering::SeqCst);
+        self.0.tasks_acquire.write(|w| unsafe { w.bits(1) });
+        if self.0.events_acquired.read().bits() != 0 {
+            Ok(self)
+        } else {
+            Err(Error::SemaphoreNotAvailable)
+        }
     }
 
     /// Releases the SPIS semaphore, enabling the SPIS to acquire it.
@@ -354,7 +386,7 @@ where
         let (tx_ptr, tx_len) = unsafe { tx_buffer.read_buffer() };
         let rx_maxcnt = rx_len * core::mem::size_of::<RxW>();
         let tx_maxcnt = tx_len * core::mem::size_of::<TxW>();
-        if rx_maxcnt > EASY_DMA_SIZE || tx_maxcnt > EASY_DMA_SIZE {
+        if rx_maxcnt.max(tx_maxcnt) > EASY_DMA_SIZE {
             return Err(Error::BufferTooLong);
         }
         if (tx_ptr as usize) < SRAM_LOWER || (tx_ptr as usize) > SRAM_UPPER {
@@ -389,8 +421,8 @@ where
     }
 
     /// Returns the raw interface to the underlying SPIS peripheral.
-    pub fn free(self) -> T {
-        self.0
+    pub fn free(self) -> (T, Pins) {
+        (self.spis, self.pins)
     }
 }
 
@@ -555,6 +587,7 @@ pub enum Mode {
 pub enum Error {
     DMABufferNotInDataMemory,
     BufferTooLong,
+    SemaphoreNotAvailable,
 }
 
 mod sealed {
