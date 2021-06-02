@@ -150,6 +150,7 @@ where
     #[inline(always)]
     pub fn disable(&self) -> &Self {
         self.spis.enable.write(|w| w.enable().disabled());
+        self.reset_events();
         self
     }
 
@@ -157,9 +158,21 @@ where
     #[inline(always)]
     pub fn acquire(&self) -> &Self {
         compiler_fence(Ordering::SeqCst);
-        self.spis.tasks_acquire.write(|w| unsafe { w.bits(1) });
-        while self.spis.events_acquired.read().bits() == 0 {}
-        self
+
+        match self.semaphore_status() {
+            SemaphoreStatus::Free | SemaphoreStatus::SPIS => {
+                self.spis.tasks_acquire.write(|w| unsafe { w.bits(1) });
+                while self.spis.events_acquired.read().bits() == 0 {}
+                self
+            }
+            SemaphoreStatus::CPUPending => {
+                while self.spis.events_acquired.read().bits() == 0 {}
+                self
+            }
+            SemaphoreStatus::CPU => {
+                self
+            }
+        }
     }
 
     /// Requests acquiring the SPIS semaphore, returning an error if not
@@ -170,12 +183,23 @@ where
     #[inline(always)]
     pub fn try_acquire(&self) -> Result<&Self, Error> {
         compiler_fence(Ordering::SeqCst);
-        self.spis.tasks_acquire.write(|w| unsafe { w.bits(1) });
-        if self.spis.events_acquired.read().bits() != 0 {
-            Ok(self)
-        } else {
-            Err(Error::SemaphoreNotAvailable)
+        match self.semaphore_status() {
+            SemaphoreStatus::Free | SemaphoreStatus::SPIS => {
+                self.spis.tasks_acquire.write(|w| unsafe { w.bits(1) });
+                if self.spis.events_acquired.read().bits() != 0 {
+                    Ok(self)
+                } else {
+                    Err(Error::SemaphoreNotAvailable)
+                }
+            }
+            SemaphoreStatus::CPUPending => {
+                Err(Error::SemaphoreNotAvailable)
+            }
+            SemaphoreStatus::CPU => {
+                Ok(self)
+            }
         }
+
     }
 
     /// Releases the SPIS semaphore, enabling the SPIS to acquire it.
@@ -251,7 +275,7 @@ where
     /// Checks if the semaphore is acquired.
     #[inline(always)]
     pub fn is_acquired(&self) -> bool {
-        self.spis.events_acquired.read().bits() != 0
+        self.semaphore_status() == SemaphoreStatus::CPU
     }
 
     /// Checks if last transaction overread.
@@ -270,6 +294,10 @@ where
     #[inline(always)]
     pub fn amount(&self) -> u32 {
         self.spis.rxd.amount.read().bits()
+    }
+
+    pub fn amounts(&self) -> (u32, u32) {
+        (self.spis.rxd.amount.read().bits(), self.spis.txd.amount.read().bits())
     }
 
     /// Returns the semaphore status.
@@ -322,6 +350,7 @@ where
     where
         B: WriteBuffer<Word = W> + 'static,
     {
+        self.reset_events();
         let (ptr, len) = unsafe { buffer.write_buffer() };
         let maxcnt = len * core::mem::size_of::<W>();
         if maxcnt > EASY_DMA_SIZE {
@@ -366,6 +395,7 @@ where
         TxB: ReadBuffer<Word = TxW> + 'static,
         RxB: WriteBuffer<Word = RxW> + 'static,
     {
+        self.reset_events();
         let (rx_ptr, rx_len) = unsafe { rx_buffer.write_buffer() };
         let (tx_ptr, tx_len) = unsafe { tx_buffer.read_buffer() };
         let rx_maxcnt = rx_len * core::mem::size_of::<RxW>();
@@ -428,9 +458,19 @@ impl<T: Instance, B> Transfer<T, B> {
         let inner = self
             .inner
             .take()
-            .unwrap_or_else(|| unsafe { core::hint::unreachable_unchecked() });
+            .unwrap();
         while !inner.spis.is_done() {}
         inner.spis.acquire();
+        (inner.buffer, inner.spis)
+    }
+
+    pub fn bail(mut self) -> (B, Spis<T>) {
+        compiler_fence(Ordering::SeqCst);
+        let inner = self
+            .inner
+            .take()
+            .unwrap();
+        inner.spis.disable();
         (inner.buffer, inner.spis)
     }
 
@@ -439,9 +479,17 @@ impl<T: Instance, B> Transfer<T, B> {
     pub fn is_done(&mut self) -> bool {
         let inner = self
             .inner
-            .take()
-            .unwrap_or_else(|| unsafe { core::hint::unreachable_unchecked() });
+            .as_mut()
+            .unwrap();
         inner.spis.is_done()
+    }
+
+    pub fn is_acquired(&mut self) -> bool {
+        let inner = self
+            .inner
+            .as_mut()
+            .unwrap();
+        inner.spis.semaphore_status() == SemaphoreStatus::CPU
     }
 }
 
@@ -449,7 +497,6 @@ impl<T: Instance, B> Drop for Transfer<T, B> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.as_mut() {
             compiler_fence(Ordering::SeqCst);
-            while !inner.spis.is_done() {}
             inner.spis.disable();
         }
     }
@@ -473,9 +520,19 @@ impl<T: Instance, TxB, RxB> TransferSplit<T, TxB, RxB> {
         let inner = self
             .inner
             .take()
-            .unwrap_or_else(|| unsafe { core::hint::unreachable_unchecked() });
+            .unwrap();
         while !inner.spis.is_done() {}
         inner.spis.acquire();
+        (inner.tx_buffer, inner.rx_buffer, inner.spis)
+    }
+
+    pub fn bail(mut self) -> (TxB, RxB, Spis<T>) {
+        compiler_fence(Ordering::SeqCst);
+        let inner = self
+            .inner
+            .take()
+            .unwrap();
+        inner.spis.disable();
         (inner.tx_buffer, inner.rx_buffer, inner.spis)
     }
 
@@ -485,8 +542,16 @@ impl<T: Instance, TxB, RxB> TransferSplit<T, TxB, RxB> {
         let inner = self
             .inner
             .as_mut()
-            .unwrap_or_else(|| unsafe { core::hint::unreachable_unchecked() });
+            .unwrap();
         inner.spis.is_done()
+    }
+
+    pub fn is_acquired(&mut self) -> bool {
+        let inner = self
+            .inner
+            .as_mut()
+            .unwrap();
+        inner.spis.semaphore_status() == SemaphoreStatus::CPU
     }
 }
 
@@ -494,7 +559,6 @@ impl<T: Instance, TxB, RxB> Drop for TransferSplit<T, TxB, RxB> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             compiler_fence(Ordering::SeqCst);
-            while !inner.spis.is_done() {}
             inner.spis.disable();
         }
     }
