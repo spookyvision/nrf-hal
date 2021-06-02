@@ -2,6 +2,7 @@
 //!
 //! See product specification, chapter 31.
 
+use core::marker::PhantomData;
 use core::ops::Deref;
 use core::sync::atomic::{compiler_fence, Ordering::SeqCst};
 
@@ -182,7 +183,7 @@ where
         self.complete_spi_dma_transfer(&tx, &rx).map(drop)
     }
 
-    fn start_spi_dma_transfer(&mut self, tx: &DmaSlice, rx: &DmaSlice) {
+    fn set_dma_values(&mut self, tx: &DmaSlice, rx: &DmaSlice) {
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // before any DMA action has started.
@@ -207,6 +208,17 @@ where
             // This is safe for the same reasons that writing to TXD.MAXCNT is
             // safe. Please refer to the explanation there.
             unsafe { w.maxcnt().bits(rx.len as _) });
+
+        compiler_fence(SeqCst);
+    }
+
+    fn start_spi_dma_transfer(&mut self, tx: &DmaSlice, rx: &DmaSlice) {
+        // Conservative compiler fence to prevent optimizations that do not
+        // take in to account actions by DMA. The fence has been placed here,
+        // before any DMA action has started.
+        compiler_fence(SeqCst);
+
+        self.set_dma_values(tx, rx);
 
         self.periph.events_end.write(|w| w.events_end().clear_bit());
 
@@ -423,6 +435,7 @@ where
             tx_buffer,
             rx_buffer,
             spim: self,
+            next_queued: false,
         })})
     }
 }
@@ -449,6 +462,8 @@ pub enum Error {
     DMABufferNotInDataMemory,
     Transmit,
     Receive,
+    NextTransferAlreadyEnqueued,
+    CurrentTransferStillPending,
 }
 
 /// Implemented by all SPIM instances.
@@ -503,8 +518,18 @@ where
     tx_buffer: TxB,
     rx_buffer: RxB,
     spim: Spim<T>,
+    next_queued: bool,
 }
 
+pub struct PendingSplit<T: Instance, TxB, RxB>
+where
+    TxB: ReadBuffer,
+    RxB: WriteBuffer,
+{
+    tx_buffer: TxB,
+    rx_buffer: RxB,
+    _phantom: PhantomData<T>,
+}
 
 #[inline(always)]
 fn rb_to_dma_slice<RB: ReadBuffer>(rb: &RB) -> DmaSlice {
@@ -549,6 +574,65 @@ where
         (inner.tx_buffer, inner.rx_buffer, inner.spim)
     }
 
+    pub fn exchange_transfer_wait(self, pending: PendingSplit<T, TxB, RxB>) -> (TxB, RxB, Self) {
+        // TODO: See notes above about validating shortcut, started events, etc.
+
+        let (old_txb, old_rxb, spim) = self.wait();
+        let new = TransferSplit {
+            inner: Some(InnerSplit {
+                tx_buffer: pending.tx_buffer,
+                rx_buffer: pending.rx_buffer,
+                spim,
+                next_queued: false,
+            })
+        };
+
+        (old_txb, old_rxb, new)
+    }
+
+    // TODO: These don't HAVE to be TxB and RxB, we could have two different
+    // types (but with the same bounds), but that should be a non-breaking
+    // change later
+    //
+    // TODO: We probably *should* check that the "STARTED" event has happened,
+    // and that the start-to-end shortcut is activated
+    pub fn enqueue_next_transfer(&mut self, tx_buffer: TxB, mut rx_buffer: RxB) -> Result<PendingSplit<T, TxB, RxB>, (TxB, RxB, Error)> {
+        let tx_dma = rb_to_dma_slice(&tx_buffer);
+        let rx_dma = wb_to_dma_slice(&mut rx_buffer);
+
+        if rx_dma.len.max(tx_dma.len) as usize > EASY_DMA_SIZE {
+            return Err((tx_buffer, rx_buffer, Error::TxBufferTooLong));
+        }
+        if (tx_dma.ptr as usize) < SRAM_LOWER || (tx_dma.ptr as usize) > SRAM_UPPER {
+            return Err((tx_buffer, rx_buffer, Error::DMABufferNotInDataMemory));
+        }
+
+        let mut inner = self
+            .inner
+            .as_mut()
+            .unwrap();
+
+        if inner.next_queued {
+            return Err((tx_buffer, rx_buffer, Error::NextTransferAlreadyEnqueued));
+        }
+
+        let started = inner.spim.periph.events_started.read().events_started().bit_is_set();
+        if started {
+            inner.spim.periph.events_started.write(|w| w.events_started().clear_bit());
+        } else {
+            return Err((tx_buffer, rx_buffer, Error::CurrentTransferStillPending));
+        }
+
+        inner.next_queued = true;
+        inner.spim.set_dma_values(&tx_dma, &rx_dma);
+
+        Ok(PendingSplit {
+            tx_buffer,
+            rx_buffer,
+            _phantom: PhantomData,
+        })
+    }
+
     // TODO: We should probably add `bail` method like `spis`, but it would
     // require thinking about how to clean up, and potentially re-enable.
 
@@ -563,6 +647,7 @@ where
     }
 }
 
+// TODO: Should we also impl drop for PendingSplit? Probably!
 impl<T: Instance, TxB, RxB> Drop for TransferSplit<T, TxB, RxB>
 where
     TxB: ReadBuffer,
