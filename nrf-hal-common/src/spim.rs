@@ -29,13 +29,10 @@ use crate::pac::SPIM3;
 
 use crate::gpio::{Floating, Input, Output, Pin, PushPull};
 use crate::target_constants::{EASY_DMA_SIZE, FORCE_COPY_BUFFER_SIZE};
+use crate::target_constants::{SRAM_LOWER, SRAM_UPPER};
 use crate::{slice_in_ram, slice_in_ram_or, DmaSlice};
+use embedded_dma::{ReadBuffer, WriteBuffer};
 use embedded_hal::digital::v2::OutputPin;
-use embedded_dma::*;
-use crate::target_constants::{
-    SRAM_UPPER,
-    SRAM_LOWER,
-};
 
 /// Interface to a SPIM instance.
 ///
@@ -164,10 +161,7 @@ where
             // there.
             unsafe { w.orc().bits(orc) });
 
-        Spim {
-            periph: spim,
-            pins,
-        }
+        Spim { periph: spim, pins }
     }
 
     /// Internal helper function to setup and execute SPIM DMA transfer.
@@ -190,7 +184,10 @@ where
         compiler_fence(SeqCst);
 
         // Set up the DMA write.
-        self.periph.txd.ptr.write(|w| unsafe { w.ptr().bits(tx.ptr) });
+        self.periph
+            .txd
+            .ptr
+            .write(|w| unsafe { w.ptr().bits(tx.ptr) });
 
         self.periph.txd.maxcnt.write(|w|
             // Note that that nrf52840 maxcnt is a wider.
@@ -238,7 +235,11 @@ where
         self.periph.events_end.read().bits() != 0
     }
 
-    fn complete_spi_dma_transfer(&mut self, tx: &DmaSlice, rx: &DmaSlice) -> Result<(usize, usize), Error> {
+    fn complete_spi_dma_transfer(
+        &mut self,
+        tx: &DmaSlice,
+        rx: &DmaSlice,
+    ) -> Result<(usize, usize), Error> {
         // Reset the event, otherwise it will always read `1` from now on.
         self.periph.events_end.write(|w| w.events_end().clear_bit());
 
@@ -414,7 +415,6 @@ where
         TxB: ReadBuffer<Word = TxW>,
         RxB: WriteBuffer<Word = RxW>,
     {
-
         let tx_dma = rb_to_dma_slice(&tx_buffer);
         let rx_dma = wb_to_dma_slice(&mut rx_buffer);
 
@@ -426,17 +426,16 @@ where
         }
 
         // tx, rx
-        self.start_spi_dma_transfer(
-            &tx_dma,
-            &rx_dma,
-        );
+        self.start_spi_dma_transfer(&tx_dma, &rx_dma);
 
-        Ok(TransferSplit { inner: Some(InnerSplit {
-            tx_buffer,
-            rx_buffer,
-            spim: self,
-            next_queued: false,
-        })})
+        Ok(TransferSplit {
+            inner: Some(InnerSplit {
+                tx_buffer,
+                rx_buffer,
+                spim: self,
+                next_queued: false,
+            }),
+        })
     }
 }
 
@@ -457,7 +456,7 @@ pub struct Pins {
 #[derive(Debug)]
 pub enum Error {
     TxBufferTooLong,
-    RxBufferTooLong,
+    RxBufferTooLong, // TODO this is never used
     /// EasyDMA can only read from data memory, read only buffers in flash will fail.
     DMABufferNotInDataMemory,
     Transmit,
@@ -558,18 +557,18 @@ where
     pub fn wait(mut self) -> (TxB, RxB, Spim<T>) {
         compiler_fence(Ordering::SeqCst);
 
-        let mut inner = self
-            .inner
-            .take()
-            .unwrap();
+        let mut inner = self.inner.take().unwrap();
 
         while !inner.spim.is_spi_dma_transfer_complete() {}
 
         // tx, rx
-        inner.spim.complete_spi_dma_transfer(
-            &rb_to_dma_slice(&inner.tx_buffer),
-            &wb_to_dma_slice(&mut inner.rx_buffer),
-        ).ok();
+        inner
+            .spim
+            .complete_spi_dma_transfer(
+                &rb_to_dma_slice(&inner.tx_buffer),
+                &wb_to_dma_slice(&mut inner.rx_buffer),
+            )
+            .ok();
 
         (inner.tx_buffer, inner.rx_buffer, inner.spim)
     }
@@ -584,7 +583,7 @@ where
                 rx_buffer: pending.rx_buffer,
                 spim,
                 next_queued: false,
-            })
+            }),
         };
 
         (old_txb, old_rxb, new)
@@ -596,7 +595,11 @@ where
     //
     // TODO: We probably *should* check that the "STARTED" event has happened,
     // and that the start-to-end shortcut is activated
-    pub fn enqueue_next_transfer(&mut self, tx_buffer: TxB, mut rx_buffer: RxB) -> Result<PendingSplit<T, TxB, RxB>, (TxB, RxB, Error)> {
+    pub fn enqueue_next_transfer(
+        &mut self,
+        tx_buffer: TxB,
+        mut rx_buffer: RxB,
+    ) -> Result<PendingSplit<T, TxB, RxB>, (TxB, RxB, Error)> {
         let tx_dma = rb_to_dma_slice(&tx_buffer);
         let rx_dma = wb_to_dma_slice(&mut rx_buffer);
 
@@ -607,18 +610,25 @@ where
             return Err((tx_buffer, rx_buffer, Error::DMABufferNotInDataMemory));
         }
 
-        let mut inner = self
-            .inner
-            .as_mut()
-            .unwrap();
+        let mut inner = self.inner.as_mut().unwrap();
 
         if inner.next_queued {
             return Err((tx_buffer, rx_buffer, Error::NextTransferAlreadyEnqueued));
         }
 
-        let started = inner.spim.periph.events_started.read().events_started().bit_is_set();
+        let started = inner
+            .spim
+            .periph
+            .events_started
+            .read()
+            .events_started()
+            .bit_is_set();
         if started {
-            inner.spim.periph.events_started.write(|w| w.events_started().clear_bit());
+            inner
+                .spim
+                .periph
+                .events_started
+                .write(|w| w.events_started().clear_bit());
         } else {
             return Err((tx_buffer, rx_buffer, Error::CurrentTransferStillPending));
         }
@@ -639,10 +649,7 @@ where
     /// Checks if the granted transfer is done.
     #[inline(always)]
     pub fn is_done(&mut self) -> bool {
-        let inner = self
-            .inner
-            .as_mut()
-            .unwrap();
+        let inner = self.inner.as_mut().unwrap();
         inner.spim.is_spi_dma_transfer_complete()
     }
 }
